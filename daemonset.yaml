@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: csa
+spec:
+  selector:
+    matchLabels:
+      name: csa
+  template:
+    metadata:
+      labels:
+        name: csa
+    spec:
+      containers:
+      - name: csa
+        image: eno931103/test:csa
+        imagePullPolicy: Always
+        volumeMounts:
+        - name: proc
+          mountPath: /rootfs/proc
+          readOnly: true
+        - name: docker
+          mountPath: /rootfs/docker
+          readOnly: true
+        - name: moby
+          mountPath: /rootfs/moby
+          readOnly: true
+        - name: containers
+          mountPath: /rootfs/containers
+          readOnly: true
+        - name: k8sio
+          mountPath: /rootfs/k8s.io
+          readOnly: true
+        - name: snapshots
+          mountPath: /rootfs/snapshots
+          readOnly: true
+        ports:
+          - name: http
+            hostPort: 8080
+            containerPort: 8080
+            protocol: TCP
+        command: ["/dist/main"]
+        # args: ["--pidlist"]
+      volumes:
+      - name: proc
+        hostPath:
+          path: /proc
+      - name: docker
+        hostPath:
+          path: /var/lib/docker
+      - name: moby
+        hostPath:
+          path: /run/docker/runtime-runc/moby
+      - name: containers
+        hostPath:
+          path: /var/lib/containers
+      - name: k8sio
+        hostPath:
+          path: /run/containerd/io.containerd.runtime.v2.task/k8s.io
+      - name: snapshots
+        hostPath:
+          path: /var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots
