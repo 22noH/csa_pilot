@@ -826,23 +826,6 @@ func WriteFile(filePath string, pNameList []string, cpuList []float32, memList [
 	if err != nil {
 		return err
 	}
-
-	// var newByte []byte
-	// var tempString string
-	// for i := 0; i < len(processInfo); i++ {
-	// 	pid, err := strconv.Atoi(processInfo[i].ProcessId)
-	// 	if err != nil {
-	// 		continue
-	// 	}
-	// 	tempString += fmt.Sprintf("%s %6.3f%% %4dMB %s\n", processInfo[i].ProcessName, processInfo[i].CpuUsage, processInfo[i].MemUsage/1024/1024, pidNameMap[pid])
-	// }
-	// newByte = []byte(tempString)
-
-	// err := ioutil.WriteFile(filePath+"/cpu", newByte, 0644)
-	// if err != nil {
-	// 	return err
-	// }
-
 	return nil
 }
 
