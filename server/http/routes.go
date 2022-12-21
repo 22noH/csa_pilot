@@ -1,7 +1,8 @@
 package http
 
 import (
-	"container-agent/module"
+	"container-agent/job"
+	"io/ioutil"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -10,7 +11,8 @@ import (
 func (h *Handler) Register(e *echo.Echo) {
 	e.GET("/", h.ok)
 	e.GET("/PIDINFO", h.PID)
-	e.GET("/PODINFO", h.FileSystemInfo)
+	e.GET("/PODINFO", h.POD)
+	e.GET("/Register", h.RegisterAgent)
 	// // accounts
 	// accounts := e.Group("/accounts")
 	// accounts.GET("", h.getAccounts)
@@ -30,8 +32,23 @@ func (h *Handler) ok(c echo.Context) error {
 	return c.String(http.StatusOK, "OK\n")
 }
 func (h *Handler) PID(c echo.Context) error {
-	return c.String(http.StatusOK, module.ProcessInfoJsonData)
+	pidInfo, err := ioutil.ReadFile("/dist/pidinfo")
+	if err != nil {
+		panic(err)
+		return c.String(http.StatusOK, err.Error())
+	}
+	return c.String(http.StatusOK, string(pidInfo))
 }
-func (h *Handler) FileSystemInfo(c echo.Context) error {
-	return c.String(http.StatusOK, module.FileListJsonMerged)
+func (h *Handler) POD(c echo.Context) error {
+	podInfo, err := ioutil.ReadFile("/dist/podinfo")
+	if err != nil {
+		panic(err)
+		return c.String(http.StatusOK, err.Error())
+	}
+	return c.String(http.StatusOK, string(podInfo))
+}
+func (h *Handler) RegisterAgent(c echo.Context) error {
+	agentinfo := job.RegisterAgent()
+
+	return c.String(http.StatusOK, agentinfo)
 }

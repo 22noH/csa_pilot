@@ -516,8 +516,7 @@ type JsonAnno struct {
 	SandboxId     string `json:"io.kubernetes.cri.sandbox-id"`
 }
 
-func GetFileSystemDir(containerIds []string, pidNameMap map[int]string, runtime string) ([]string, []string, error) {
-	mergedLayerDirList := make([]string, 0)
+func GetFileSystemDir(containerIds []string, pidNameMap map[int]string, runtime string) ([]string, error) {
 	diffLayerDirList := make([]string, 0)
 	realContainer := map[string]string{}
 	diffLayerMap := map[string]string{}
@@ -526,7 +525,7 @@ func GetFileSystemDir(containerIds []string, pidNameMap map[int]string, runtime 
 		dir := "/rootfs/proc/1/mounts"
 		file, err := os.Open(dir)
 		if err != nil {
-			return mergedLayerDirList, diffLayerDirList, err
+			return diffLayerDirList, err
 		}
 
 		var diffLayerDir, key string
@@ -546,7 +545,7 @@ func GetFileSystemDir(containerIds []string, pidNameMap map[int]string, runtime 
 			}
 		}
 		if scanner.Err() != nil {
-			return mergedLayerDirList, diffLayerDirList, err
+			return diffLayerDirList, err
 		}
 
 		contPrefix := "/rootfs/k8s.io/"
@@ -554,7 +553,7 @@ func GetFileSystemDir(containerIds []string, pidNameMap map[int]string, runtime 
 		contIds := make([]string, 0)
 		files, err := ioutil.ReadDir(contPrefix)
 		if err != nil {
-			return mergedLayerDirList, diffLayerDirList, err
+			return diffLayerDirList, err
 		}
 
 		for _, file := range files {
@@ -588,7 +587,6 @@ func GetFileSystemDir(containerIds []string, pidNameMap map[int]string, runtime 
 			if jsonContainerd.Annotations.ContainerType == "container" {
 				if _, ok := realContainer[jsonContainerd.Annotations.SandboxId]; !ok {
 					realContainer[jsonContainerd.Annotations.SandboxId] = contId
-					mergedLayerDirList = append(mergedLayerDirList, contPrefix+contId+"/rootfs")
 					diffLayerDirList = append(diffLayerDirList, diffLayerMap[contId])
 				}
 			}
@@ -597,7 +595,7 @@ func GetFileSystemDir(containerIds []string, pidNameMap map[int]string, runtime 
 		prefixState := func(runtime string) string {
 			if runtime == "docker" {
 				return "/rootfs/moby/"
-			} else {
+			} else { //crio
 				return "/rootfs/containers/storage/overlay-containers/"
 			}
 		}(runtime)
@@ -617,19 +615,19 @@ func GetFileSystemDir(containerIds []string, pidNameMap map[int]string, runtime 
 
 			file, err := os.Open(fullStateDir)
 			if err != nil {
-				return mergedLayerDirList, diffLayerDirList, err
+				return diffLayerDirList, err
 			}
 			scanner := bufio.NewScanner(file)
 			for scanner.Scan() {
 				newJson += scanner.Text()
 			}
 			if scanner.Err() != nil {
-				return mergedLayerDirList, diffLayerDirList, scanner.Err()
+				return diffLayerDirList, scanner.Err()
 			}
 
 			err = json.Unmarshal([]byte(newJson), &jsonState)
 			if err != nil {
-				return mergedLayerDirList, diffLayerDirList, err
+				return diffLayerDirList, err
 			}
 			mergedLayerDir = func(runtime string) string {
 				if runtime == "docker" {
@@ -641,26 +639,25 @@ func GetFileSystemDir(containerIds []string, pidNameMap map[int]string, runtime 
 
 			diffLayerDir := strings.Replace(mergedLayerDir, "merged", "diff", 1)
 
-			mergedLayerDirList = append(mergedLayerDirList, mergedLayerDir)
 			diffLayerDirList = append(diffLayerDirList, diffLayerDir)
 		}
 	}
 
-	return mergedLayerDirList, diffLayerDirList, nil
+	return diffLayerDirList, nil
 }
 
 var dirWalker DirWalker
 
-func Walk(filePath string, depth int, maxDepth int) error {
+func Walk(filePath string) error {
 	files, err := ioutil.ReadDir(filePath)
 	if err != nil {
 		return err
 	}
 	for _, file := range files {
-		if file.IsDir() == true && depth < maxDepth {
+		if file.IsDir() == true {
 			dirWalker.FileList = append(dirWalker.FileList, filePath+file.Name()+"/")
-			Walk(filePath+file.Name()+"/", depth+1, maxDepth)
-		} else if file.IsDir() != true && depth <= maxDepth {
+			Walk(filePath + file.Name() + "/")
+		} else if file.IsDir() != true {
 			if file.Mode()&fs.ModeSymlink == fs.ModeSymlink {
 				var newDir string
 				temp, err := os.Readlink(filePath + file.Name())
@@ -680,9 +677,12 @@ func Walk(filePath string, depth int, maxDepth int) error {
 					return err
 				}
 
-				if newStat.Mode()&fs.ModeDir == fs.ModeDir && depth < maxDepth {
+				if newStat.Mode()&fs.ModeDir == fs.ModeDir {
 					dirWalker.FileList = append(dirWalker.FileList, newDir+"/")
-					Walk(newDir+"/", depth+1, maxDepth)
+					if temp == "." {
+						continue
+					}
+					Walk(newDir + "/")
 				} else {
 					dirWalker.FileList = append(dirWalker.FileList, newDir)
 				}
@@ -697,7 +697,7 @@ func Walk(filePath string, depth int, maxDepth int) error {
 type MergedList struct {
 	PodName     string   `json:"PodName"`
 	ContainerId string   `json:"ContainerId"`
-	FileList    []string `json:"FileList"`
+	FileList    []string `json:"DiffFileList"`
 }
 
 type DirWalker struct {
@@ -705,73 +705,35 @@ type DirWalker struct {
 	FileList []string
 }
 
-func GetFileList(podNames []string, containerIds []string, mergedList []string, diffList []string, depth int64, runtime string) (string, error) {
+func GetPodInfo(podNames []string, containerIds []string, diffList []string, runtime string) (string, error) {
 	var jsonMerged []byte
 	var tempMergedList []MergedList
 
-	mergedMap := map[string][]int{}
-	diffMap := map[string][]int{}
-
-	for i := 0; i < len(mergedList); i++ {
+	for i := 0; i < len(diffList); i++ {
 		dirWalker = DirWalker{"", make([]string, 0)}
-		merged := mergedList[i]
+		diff := diffList[i]
 		containerId := containerIds[i]
 		podName := podNames[i]
 		var tempMerged MergedList
 
 		tempMerged.PodName = podName
 		tempMerged.ContainerId = containerId
-		dirWalker.Root = merged
-		err := Walk(merged+"/", 0, int(depth))
+		dirWalker.Root = diff
+		err := Walk(diff + "/" /*, 0, int(depth)*/)
 		if err != nil {
 			return string(jsonMerged), err
 		}
 		for j := 0; j < len(dirWalker.FileList); j++ {
 			dirWalker.FileList[j] = dirWalker.FileList[j][len(dirWalker.Root):]
-			tempArr := make([]int, 3)
-			tempArr[0] = i
-			tempArr[1] = j
-			mergedMap[dirWalker.FileList[j]] = tempArr
 		}
 		tempMerged.FileList = dirWalker.FileList
 
 		tempMergedList = append(tempMergedList, tempMerged)
 	}
-
-	for i := 0; i < len(diffList); i++ {
-		dirWalker = DirWalker{"", make([]string, 0)}
-		diff := diffList[i]
-		//containerId := containerIds[i]
-		//podName := podNames[i]
-		//var tempDiff MergedList
-
-		//tempMerged.PodName = podName
-		//tempMerged.ContainerId = containerId
-
-		dirWalker.Root = diff
-		err := Walk(diff+"/", 0, int(depth))
-		if err != nil {
-			return string(jsonMerged), err
-		}
-		for j := 0; j < len(dirWalker.FileList); j++ {
-			dirWalker.FileList[j] = dirWalker.FileList[j][len(dirWalker.Root):]
-			if tempArr, ok := mergedMap[dirWalker.FileList[j]]; ok {
-				if _, ok := diffMap[dirWalker.FileList[j]]; !ok {
-					diffMap[dirWalker.FileList[j]] = tempArr
-				}
-			}
-		}
-	}
-
-	for _, tempArr := range diffMap {
-		tempMergedList[tempArr[0]].FileList[tempArr[1]] = tempMergedList[tempArr[0]].FileList[tempArr[1]] + " MODIFIED"
-	}
-
 	jsonMerged, err := json.MarshalIndent(tempMergedList, "", "  ")
 	if err != nil {
 		return string(jsonMerged), err
 	}
-
 	return string(jsonMerged), nil
 }
 
@@ -829,7 +791,7 @@ func WriteFile(filePath string, pNameList []string, cpuList []float32, memList [
 	return nil
 }
 
-func MakeJsonData(pNameList []string, cpuList []float32, memList []uint64, pidList []string, pidNameMap map[int]string) (string, error) {
+func GetPidInfo(pNameList []string, cpuList []float32, memList []uint64, pidList []string, pidNameMap map[int]string) (string, error) {
 	processInfo := make([]ProcessInfo, 0)
 	for i := 0; i < len(pNameList); i++ {
 		var temp ProcessInfo
@@ -859,10 +821,7 @@ func MakeJsonData(pNameList []string, cpuList []float32, memList []uint64, pidLi
 	return string(jsonData), nil
 }
 
-var FileListJsonMerged string
-var ProcessInfoJsonData string
-
-func Monitoring() error {
+func Monitoring() {
 	uptime, err := GetUptime()
 	if err != nil {
 		panic(err)
@@ -905,27 +864,36 @@ func Monitoring() error {
 		}
 	}
 
-	mergedList, diffList, err := GetFileSystemDir(ids, pidNameMap, runtime)
+	diffList, err := GetFileSystemDir(ids, pidNameMap, runtime)
 	if err != nil {
 		panic(err)
 	}
 
-	var depth int64 // depth.........
-	depth, err = strconv.ParseInt("3", 10, 32)
-	if err != nil {
-		panic(err)
+	if _, err := os.Stat("/dist"); err != nil {
+		err := os.MkdirAll("/dist", 644)
+		if err != nil {
+			panic(err)
+		}
 	}
-	FileListJsonMerged, err = GetFileList(pods, ids, mergedList, diffList, depth, runtime)
+
+	PidInfo, err := GetPidInfo(pNameList, cpuList, memList, pidList, pidNameMap)
 	if err != nil {
 		panic(err)
 	}
 
-	ProcessInfoJsonData, err = MakeJsonData(pNameList, cpuList, memList, pidList, pidNameMap)
+	err = ioutil.WriteFile("/dist/pidinfo", []byte(PidInfo), 0644)
 	if err != nil {
 		panic(err)
 	}
 
-	// println(ProcessInfoJsonData, FileListJsonMerged)
-	return nil
+	PodInfo, err := GetPodInfo(pods, ids, diffList, runtime)
+	if err != nil {
+		panic(err)
+	}
+
+	err = ioutil.WriteFile("/dist/podinfo", []byte(PodInfo), 0644)
+	if err != nil {
+		panic(err)
+	}
 
 }

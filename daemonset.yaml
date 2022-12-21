@@ -1,20 +1,45 @@
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: csa
+  name: csa1
 spec:
   selector:
     matchLabels:
-      name: csa
+      name: csa1
   template:
     metadata:
       labels:
-        name: csa
+        name: csa1
     spec:
       containers:
-      - name: csa
-        image: eno931103/test:csa
+      - name: csa1
+        image: eno931103/test:csa_test1
         imagePullPolicy: Always
+        env:
+        - name: CSA_NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: CSA_POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: CSA_POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: CSA_POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: CSA_POD_UID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.uid
+        - name: CSA_NODE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
         volumeMounts:
         - name: proc
           mountPath: /rootfs/proc
@@ -40,7 +65,6 @@ spec:
             containerPort: 8080
             protocol: TCP
         command: ["/dist/main"]
-        # args: ["--pidlist"]
       volumes:
       - name: proc
         hostPath:

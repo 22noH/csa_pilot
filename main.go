@@ -38,18 +38,16 @@ func main() {
 		printUsage()
 		os.Exit(1)
 	}
-
 	// cron
 	cronScheduler := gocron.NewScheduler(time.Local)
 	delayTime := time.Now().Add(5 * time.Second)
-	cronScheduler.Every(3 * time.Second).StartAt(delayTime).Do(
+	cronScheduler.Every(1 * time.Minute).StartAt(delayTime).SingletonMode().Do(
 		func() {
 			fmt.Println("Monitoring")
 			module.Monitoring()
 		})
 	cronScheduler.StartAsync()
 	defer cronScheduler.Stop()
-
 	// http server
 	hServer, err := httpServer.Start(*httpPort, log.INFO)
 	if err != nil {
